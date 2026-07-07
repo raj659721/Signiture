@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { SignatureProfile, TemplateType, SocialLink, SUPPORTED_FONTS, SOCIAL_PLATFORMS, LangCode, SavedProfile } from './types';
+import { SignatureProfile, TemplateType, SocialLink, SUPPORTED_FONTS, SOCIAL_PLATFORMS, LangCode, SavedProfile, AnimationType } from './types';
+import { supabase } from './utils/supabase';
 import { generateHtml, sanitizeHtml } from './utils/templates';
 import { translations, getBrowserLang } from './utils/translations';
 import { getProfileDefaults } from './utils/defaults';
@@ -9,12 +10,13 @@ import {
   Share2, Type as TypeIcon, 
   Plus, Trash2, Settings, Briefcase, Globe,
   Sun, Moon, Image as ImageIcon, ExternalLink,
-  Target, QrCode, Save, FolderOpen, Share, HelpCircle, X, Shield
+  Target, QrCode, Save, FolderOpen, Share, HelpCircle, X, Shield, Wand2
 } from 'lucide-react';
-import logo from './img/logo.webp';
-import logoHeaderDark from './img/logo-header-dark.webp';
-import footerLogoDark from './img/logo-footer-dark.webp';
-import footerLogoLight from './img/logo-footer-light.webp';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 
 const encodeBase64Utf8 = (str: string): string => {
   return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, (_, p1) => String.fromCharCode(parseInt(p1, 16))));
@@ -47,9 +49,6 @@ const LANGUAGES: { code: LangCode; label: string }[] = [
   { code: 'ja', label: '日本語' },
 ];
 
-const GLASS_CARD = "bg-white/70 dark:bg-gray-900/60 backdrop-blur-xl border border-white/40 dark:border-gray-700/50 shadow-xl rounded-3xl transition-colors duration-300";
-const GLASS_INPUT = "bg-white/50 dark:bg-gray-800/50 backdrop-blur-sm border border-white/30 dark:border-gray-600/50 focus:ring-2 focus:ring-indigo-500/50 rounded-xl";
-
 export default function App() {
   const [lang, setLang] = useState<LangCode>(getBrowserLang());
   const [profile, setProfile] = useState<SignatureProfile>(() => getProfileDefaults(getBrowserLang()));
@@ -69,12 +68,18 @@ export default function App() {
   );
   
   useEffect(() => {
-    const stored = localStorage.getItem('kore_saved_profiles');
-    if (stored) {
-      try {
-        setSavedProfiles(JSON.parse(stored));
-      } catch (e) { console.error("Failed to load profiles", e); }
-    }
+    const fetchProfiles = async () => {
+      const { data, error } = await supabase.from('saved_profiles').select('*').order('created_at', { ascending: false });
+      if (!error && data) {
+        setSavedProfiles(data.map(d => ({
+          id: d.id,
+          name: d.name,
+          data: d.data,
+          updatedAt: new Date(d.updated_at).getTime()
+        })));
+      }
+    };
+    fetchProfiles();
 
     const params = new URLSearchParams(window.location.search);
     const sharedConfig = params.get('config');
@@ -127,6 +132,33 @@ export default function App() {
     setProfile(prev => ({ ...prev, [name]: value }));
   };
 
+  const handleImageUpload = async (file: File, field: 'logoUrl' | 'avatarUrl') => {
+    try {
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${Math.random().toString(36).substring(2, 15)}_${Date.now()}.${fileExt}`;
+      const filePath = `uploads/${fileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('images')
+        .upload(filePath, file);
+
+      if (uploadError) {
+        throw uploadError;
+      }
+
+      const { data } = supabase.storage
+        .from('images')
+        .getPublicUrl(filePath);
+
+      if (data?.publicUrl) {
+        setProfile(prev => ({ ...prev, [field]: data.publicUrl }));
+      }
+    } catch (error) {
+      console.error('Error uploading image:', error);
+      alert('Error uploading image. Please check your connection or try a smaller file.');
+    }
+  };
+
   const handleStyleChange = (key: keyof typeof profile.style, value: any) => {
     setProfile(prev => ({ ...prev, style: { ...prev.style, [key]: value } }));
   };
@@ -177,17 +209,29 @@ export default function App() {
     });
   };
 
-  const handleSaveProfile = () => {
+  const handleSaveProfile = async () => {
     if (!newProfileName.trim()) return;
-    const newSaved: SavedProfile = {
-      id: Date.now().toString(),
+    
+    const newProfileData = {
       name: newProfileName,
-      data: profile,
-      updatedAt: Date.now()
+      data: profile
     };
-    const updated = [...savedProfiles, newSaved];
-    setSavedProfiles(updated);
-    localStorage.setItem('kore_saved_profiles', JSON.stringify(updated));
+
+    const { data, error } = await supabase.from('saved_profiles').insert([newProfileData]).select();
+    
+    if (!error && data && data.length > 0) {
+      const inserted = data[0];
+      const newSaved: SavedProfile = {
+        id: inserted.id,
+        name: inserted.name,
+        data: inserted.data,
+        updatedAt: new Date(inserted.updated_at).getTime()
+      };
+      setSavedProfiles([newSaved, ...savedProfiles]);
+    } else {
+      console.error("Failed to save profile", error);
+    }
+    
     setNewProfileName('');
   };
 
@@ -196,10 +240,14 @@ export default function App() {
     if (found) setProfile(found.data);
   };
 
-  const handleDeleteProfile = (id: string) => {
-    const updated = savedProfiles.filter(p => p.id !== id);
-    setSavedProfiles(updated);
-    localStorage.setItem('kore_saved_profiles', JSON.stringify(updated));
+  const handleDeleteProfile = async (id: string) => {
+    const { error } = await supabase.from('saved_profiles').delete().eq('id', id);
+    if (!error) {
+      const updated = savedProfiles.filter(p => p.id !== id);
+      setSavedProfiles(updated);
+    } else {
+      console.error("Failed to delete profile", error);
+    }
   };
 
   const handleShare = async () => {
@@ -229,565 +277,429 @@ export default function App() {
     }
   };
 
-  return (
-    <div className="min-h-screen flex flex-col relative font-sans text-gray-900 dark:text-gray-100 overflow-x-hidden selection:bg-indigo-500/30">
-      
-      {/* Dynamic Background Blobs */}
-      <div className="fixed inset-0 -z-10 overflow-hidden transition-colors duration-500 bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 dark:from-gray-950 dark:via-[#1e1b4b] dark:to-gray-950">
-        <div className="absolute top-0 -left-4 w-72 h-72 bg-purple-300 dark:bg-purple-900 rounded-full mix-blend-multiply dark:mix-blend-screen filter blur-3xl opacity-30 dark:opacity-20 animate-blob"></div>
-        <div className="absolute top-0 -right-4 w-72 h-72 bg-yellow-300 dark:bg-indigo-900 rounded-full mix-blend-multiply dark:mix-blend-screen filter blur-3xl opacity-30 dark:opacity-20 animate-blob animation-delay-2000"></div>
-        <div className="absolute -bottom-8 left-20 w-72 h-72 bg-pink-300 dark:bg-pink-900 rounded-full mix-blend-multiply dark:mix-blend-screen filter blur-3xl opacity-30 dark:opacity-20 animate-blob animation-delay-4000"></div>
-      </div>
-
-      {/* Floating Header */}
-      <header className="sticky top-2 sm:top-4 z-50 px-2 sm:px-6 lg:px-8 mb-4 sm:mb-6">
-        <div className={`max-w-7xl mx-auto ${GLASS_CARD} px-3 sm:px-6 py-3 sm:py-4 flex flex-col sm:flex-row items-center justify-between gap-3`}>
-          <div className="flex items-center gap-2 sm:gap-3">
-            <div className="w-8 h-8 sm:w-10 sm:h-10 shrink-0">
-              <img src={logo} alt={t.labels.agencyLogoAlt} className="w-full h-full object-contain dark:hidden" />
-              <img src={logoHeaderDark} alt={t.labels.agencyLogoAlt} className="w-full h-full object-contain hidden dark:inline" />
-            </div>
-            <div>
-              <h1 className="text-base sm:text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-purple-600 dark:from-indigo-400 dark:to-purple-400">
-                {t.title}
-              </h1>
-              <p className="text-[8px] sm:text-[10px] text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider">
-                {t.subtitle}
-              </p>
+    return (
+    <div className="min-h-screen flex flex-col bg-background font-sans text-foreground">
+      <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+        <div className="max-w-7xl mx-auto flex h-14 items-center justify-between px-4">
+          <div className="flex items-center gap-2">
+            <div className="hidden sm:block">
+              <h1 className="text-lg font-semibold tracking-tight">{t.title}</h1>
+              <p className="text-[10px] text-muted-foreground uppercase">{t.subtitle}</p>
             </div>
           </div>
-          <div className="flex items-center gap-2 sm:gap-3">
-            
-            {/* Kore Agency Button */}
-            <a 
-              href="https://koreagency.it" 
-              target="_blank" 
-              rel="noopener noreferrer"
-              className="hidden sm:flex items-center gap-2 px-4 py-2 rounded-full bg-indigo-600/90 hover:bg-indigo-500 text-white text-xs font-bold transition-all shadow-lg shadow-indigo-500/30 backdrop-blur-md border border-indigo-400/50"
+          <div className="flex items-center gap-4">
+            <Button variant="ghost" size="icon" onClick={() => setIsDark(!isDark)}>
+              {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            </Button>
+            <select 
+              value={lang} 
+              onChange={(e) => setLang(e.target.value as LangCode)}
+              className="bg-transparent text-sm font-medium focus:outline-none cursor-pointer"
             >
-              <span>{t.labels.visitAgency}</span>
-              <ExternalLink className="w-3 h-3" />
-            </a>
-
-            <button 
-              onClick={() => setIsDark(!isDark)}
-              className="p-2.5 rounded-full bg-white/50 dark:bg-gray-800/50 hover:bg-white/80 dark:hover:bg-gray-700/80 transition-all border border-white/20 dark:border-gray-700 backdrop-blur-sm"
-            >
-              {isDark ? <Sun className="w-4 h-4 text-yellow-400" /> : <Moon className="w-4 h-4 text-indigo-600" />}
-            </button>
-            
-            <div className="flex items-center gap-2 bg-white/50 dark:bg-gray-800/50 px-3 py-2 rounded-full border border-white/20 dark:border-gray-700 backdrop-blur-sm">
-              <Globe className="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" />
-              <select 
-                value={lang} 
-                onChange={(e) => setLang(e.target.value as LangCode)}
-                className="bg-transparent text-gray-700 dark:text-gray-200 text-xs font-semibold focus:outline-none cursor-pointer"
-              >
-                {LANGUAGES.map(l => (
-                  <option key={l.code} value={l.code} className="dark:bg-gray-800">{l.label}</option>
-                ))}
-              </select>
-            </div>
+              {LANGUAGES.map(l => (
+                <option key={l.code} value={l.code} className="dark:bg-gray-800">{l.label}</option>
+              ))}
+            </select>
           </div>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-12">
+      <main className="max-w-7xl mx-auto px-4 py-8 w-full flex-1">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
           
-          {/* LEFT COLUMN: Controls */}
           <div className="lg:col-span-5 flex flex-col gap-6">
-            
-            {/* SAVED PROFILES SECTION */}
-            <div className={GLASS_CARD + " p-5"}>
-              <h3 className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3 flex items-center gap-2">
-                 <FolderOpen className="w-3.5 h-3.5" /> {t.labels.saveProfile}
-              </h3>
-              
-              <div className="flex gap-2 mb-4">
-                 <input 
-                   type="text" 
-                   value={newProfileName}
-                   onChange={(e) => setNewProfileName(e.target.value)}
-                   placeholder={t.placeholders.profileName}
-                   className={`flex-1 ${GLASS_INPUT} px-3 py-2 text-xs`}
-                 />
-                 <button onClick={handleSaveProfile} className="bg-indigo-500 text-white rounded-xl px-4 py-2 text-xs font-bold hover:bg-indigo-600 transition-colors flex items-center gap-1">
-                   <Save className="w-3 h-3" /> 
-                 </button>
-              </div>
-
-              {savedProfiles.length > 0 && (
-                <div className="space-y-2 max-h-32 overflow-y-auto custom-scrollbar">
-                   {savedProfiles.map(p => (
-                      <div key={p.id} className="flex items-center justify-between p-2 rounded-lg bg-white/30 dark:bg-black/20 text-xs">
-                         <span className="font-medium truncate max-w-[150px]">{p.name}</span>
-                         <div className="flex gap-1">
-                            <button onClick={() => handleLoadProfile(p.id)} className="px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded hover:bg-green-200 dark:hover:bg-green-900/50 transition-colors">
-                               {t.labels.loadProfile}
-                            </button>
-                            <button onClick={() => handleDeleteProfile(p.id)} className="p-1 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded">
-                               <Trash2 className="w-3 h-3" />
-                            </button>
-                         </div>
-                      </div>
-                   ))}
+            <Card>
+              <CardHeader className="py-4 border-b">
+                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                  <FolderOpen className="w-4 h-4" /> {t.labels.saveProfile}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-4">
+                <div className="flex gap-2 mb-4">
+                  <Input 
+                    value={newProfileName}
+                    onChange={(e) => setNewProfileName(e.target.value)}
+                    placeholder={t.placeholders.profileName}
+                  />
+                  <Button onClick={handleSaveProfile} size="icon"><Save className="w-4 h-4" /></Button>
                 </div>
-              )}
-            </div>
-
-            <div className={`${GLASS_CARD} overflow-hidden`}>
-              {/* Glass Tabs with improved mobile scrolling */}
-              <div className="flex p-2 sm:p-4 gap-1 sm:gap-2 overflow-x-auto scrollbar-none">
-                {TABS.map((tab) => {
-                   const Icon = tab.icon;
-                   const isActive = activeTab === tab.id;
-                   return (
-                     <button
-                        key={tab.id}
-                        onClick={() => setActiveTab(tab.id)}
-                        className={`flex-shrink-0 sm:flex-1 py-2 sm:py-3 px-3 sm:px-2 flex flex-col items-center gap-1 sm:gap-1.5 rounded-xl sm:rounded-2xl text-[8px] sm:text-[10px] font-bold uppercase tracking-wide transition-all duration-300 min-w-[60px] sm:min-w-0 ${
-                          isActive 
-                            ? 'bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-lg shadow-indigo-500/30 transform scale-[1.02]' 
-                            : 'text-gray-500 dark:text-gray-400 hover:bg-white/40 dark:hover:bg-gray-700/40'
-                        }`}
-                     >
-                       <Icon className={`w-4 h-4 sm:w-5 sm:h-5 ${isActive ? 'text-white' : 'opacity-70'}`} />
-                       <span className="whitespace-nowrap">{t.tabs[tab.id as keyof typeof t.tabs]}</span>
-                     </button>
-                   );
-                })}
-              </div>
-
-              {/* Tab Content Area */}
-              <div className="p-4 sm:p-6 min-h-[400px] sm:min-h-[500px] border-t border-white/20 dark:border-gray-700/30">
-                
-                {activeTab === 'details' && (
-                  <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                    <div className="grid grid-cols-2 gap-4">
-                      <FormInput label={t.labels.fullName} name="fullName" value={profile.fullName} onChange={handleInputChange} />
-                      <FormInput label={t.labels.jobTitle} name="jobTitle" value={profile.jobTitle} onChange={handleInputChange} placeholder={t.placeholders.jobTitle} />
-                    </div>
-                    <FormInput label={t.labels.company} name="company" value={profile.company} onChange={handleInputChange} placeholder={t.placeholders.company} />
-                    
-                    <div className="grid grid-cols-2 gap-4">
-                      <FormInput label={t.labels.logoUrl} name="logoUrl" value={profile.logoUrl} onChange={handleInputChange} placeholder={t.placeholders.url} />
-                      <FormInput label={t.labels.logoLink} name="logoLink" value={profile.logoLink} onChange={handleInputChange} placeholder={t.placeholders.url} />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <FormInput label={t.labels.email} name="email" value={profile.email} onChange={handleInputChange} type="email" placeholder={t.placeholders.email} />
-                      <FormInput label={t.labels.website} name="website" value={profile.website} onChange={handleInputChange} placeholder={t.placeholders.url} />
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <FormInput label={t.labels.phone} name="phone" value={profile.phone} onChange={handleInputChange} placeholder={t.placeholders.phone} />
-                      <FormInput label={t.labels.mobile} name="mobile" value={profile.mobile} onChange={handleInputChange} placeholder={t.placeholders.mobile} />
-                    </div>
-                    <FormInput label={t.labels.address} name="address" value={profile.address} onChange={handleInputChange} placeholder={t.placeholders.address} />
-                    <FormInput label={t.labels.avatarUrl} name="avatarUrl" value={profile.avatarUrl} onChange={handleInputChange} placeholder={t.placeholders.url} />
-                  </div>
-                )}
-
-                {activeTab === 'social' && (
-                  <div className="space-y-5 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                    <div className="flex justify-between items-center mb-2">
-                      <h3 className="text-sm font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wide">{t.labels.socialProfiles}</h3>
-                      <button onClick={addSocial} className="text-xs flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-200 dark:hover:bg-indigo-900/50 transition-colors font-semibold">
-                        <Plus className="w-3.5 h-3.5" /> {t.labels.addSocial}
-                      </button>
-                    </div>
-                    
-                    {profile.socials.length === 0 && (
-                      <p className="text-xs text-gray-500 dark:text-gray-400">{t.labels.noSocials}</p>
-                    )}
-
-                    {profile.socials.map((social, idx) => (
-                      <div key={idx} className={`${GLASS_INPUT} p-3 flex items-center gap-2 group`}>
-                        <div className="flex-1 space-y-2">
-                           <select
-                              value={social.platform}
-                              onChange={(e) => updateSocial(idx, 'platform', e.target.value)}
-                              className="w-full text-xs bg-transparent border-b border-gray-200 dark:border-gray-600 py-1.5 text-gray-800 dark:text-gray-200 focus:outline-none focus:border-indigo-500 cursor-pointer font-medium"
-                           >
-                             {SOCIAL_PLATFORMS.map(p => (
-                               <option key={p} value={p} className="dark:bg-gray-800">{p.charAt(0).toUpperCase() + p.slice(1)}</option>
-                             ))}
-                           </select>
-                           <input
-                              type="text"
-                              value={social.url}
-                              onChange={(e) => updateSocial(idx, 'url', e.target.value)}
-                              placeholder={t.placeholders.url}
-                              className="w-full text-xs bg-transparent border-none p-0 text-gray-600 dark:text-gray-400 focus:ring-0 placeholder-gray-400/70"
-                           />
+                {savedProfiles.length > 0 && (
+                  <div className="space-y-2 max-h-32 overflow-y-auto">
+                    {savedProfiles.map(p => (
+                      <div key={p.id} className="flex items-center justify-between p-2 rounded-md border text-sm">
+                        <span className="font-medium truncate max-w-[150px]">{p.name}</span>
+                        <div className="flex gap-1">
+                          <Button variant="secondary" size="sm" onClick={() => handleLoadProfile(p.id)}>{t.labels.loadProfile}</Button>
+                          <Button variant="destructive" size="icon" className="h-8 w-8" onClick={() => handleDeleteProfile(p.id)}><Trash2 className="w-3 h-3" /></Button>
                         </div>
-                        <button 
-                          onClick={() => removeSocial(idx)}
-                          className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
                       </div>
                     ))}
                   </div>
                 )}
+              </CardContent>
+            </Card>
 
-                {activeTab === 'design' && (
-                  <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                    
-                    <div>
-                      <label className="text-xs font-bold text-gray-600 dark:text-gray-400 uppercase tracking-wider mb-4 block flex items-center gap-2">
-                        <Layout className="w-3.5 h-3.5" /> {t.labels.layout}
-                      </label>
-                      <div className="grid grid-cols-2 gap-3">
-                        {Object.values(TemplateType).map((type) => (
-                          <button
-                            key={type}
-                            onClick={() => setActiveTemplate(type)}
-                            className={`px-3 py-3 text-[10px] font-bold uppercase tracking-wide rounded-xl border transition-all duration-300 ${
-                              activeTemplate === type 
-                                ? 'bg-indigo-500 text-white border-indigo-500 shadow-lg shadow-indigo-500/30 scale-105' 
-                                : 'bg-white/40 dark:bg-gray-800/40 border-white/40 dark:border-gray-600/50 text-gray-600 dark:text-gray-300 hover:bg-white/60 dark:hover:bg-gray-700/60'
-                            }`}
-                          >
-                            {type.replace('_', ' ')}
-                          </button>
-                        ))}
+            <Tabs defaultValue="details" value={activeTab} onValueChange={setActiveTab}>
+              <TabsList className="w-full justify-start overflow-x-auto h-auto p-1 mb-4">
+                {TABS.map(tab => {
+                   const Icon = tab.icon;
+                   return (
+                     <TabsTrigger key={tab.id} value={tab.id} className="flex gap-2 min-w-fit">
+                       <Icon className="w-4 h-4" />
+                       <span className="hidden sm:inline">{t.tabs[tab.id as keyof typeof t.tabs]}</span>
+                     </TabsTrigger>
+                   )
+                })}
+              </TabsList>
+              
+              <Card>
+                <CardContent className="pt-6 min-h-[400px]">
+                  {activeTab === 'details' && (
+                    <div className="space-y-4">
+                       <div className="grid grid-cols-2 gap-4">
+                        <FormInput label={t.labels.fullName} name="fullName" value={profile.fullName} onChange={handleInputChange} />
+                        <FormInput label={t.labels.jobTitle} name="jobTitle" value={profile.jobTitle} onChange={handleInputChange} placeholder={t.placeholders.jobTitle} />
                       </div>
+                      <FormInput label={t.labels.company} name="company" value={profile.company} onChange={handleInputChange} placeholder={t.placeholders.company} />
+                      <div className="grid grid-cols-2 gap-4">
+                        <FormInput 
+                          label={t.labels.logoUrl} 
+                          name="logoUrl" 
+                          value={profile.logoUrl} 
+                          onChange={handleInputChange} 
+                          placeholder={t.placeholders.url} 
+                          onUpload={(file) => handleImageUpload(file, 'logoUrl')}
+                        />
+                        <FormInput label={t.labels.logoLink} name="logoLink" value={profile.logoLink} onChange={handleInputChange} placeholder={t.placeholders.url} />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <FormInput label={t.labels.email} name="email" value={profile.email} onChange={handleInputChange} type="email" placeholder={t.placeholders.email} />
+                        <FormInput label={t.labels.website} name="website" value={profile.website} onChange={handleInputChange} placeholder={t.placeholders.url} />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <FormInput label={t.labels.phone} name="phone" value={profile.phone} onChange={handleInputChange} placeholder={t.placeholders.phone} />
+                        <FormInput label={t.labels.mobile} name="mobile" value={profile.mobile} onChange={handleInputChange} placeholder={t.placeholders.mobile} />
+                      </div>
+                      <FormInput label={t.labels.address} name="address" value={profile.address} onChange={handleInputChange} placeholder={t.placeholders.address} />
+                      <FormInput 
+                        label={t.labels.avatarUrl} 
+                        name="avatarUrl" 
+                        value={profile.avatarUrl} 
+                        onChange={handleInputChange} 
+                        placeholder={t.placeholders.url} 
+                        onUpload={(file) => handleImageUpload(file, 'avatarUrl')}
+                      />
                     </div>
+                  )}
 
-                    <div className="grid grid-cols-2 gap-6">
+                  {activeTab === 'social' && (
+                    <div className="space-y-4">
+                      <div className="flex justify-between items-center mb-4">
+                        <Label className="uppercase text-muted-foreground tracking-wider">{t.labels.socialProfiles}</Label>
+                        <Button variant="outline" size="sm" onClick={addSocial}><Plus className="w-3 h-3 mr-1" /> {t.labels.addSocial}</Button>
+                      </div>
+                      {profile.socials.map((social, idx) => (
+                        <div key={idx} className="flex items-center gap-2 border p-3 rounded-md">
+                          <div className="flex-1 space-y-2">
+                             <select
+                                value={social.platform}
+                                onChange={(e) => updateSocial(idx, 'platform', e.target.value)}
+                                className="w-full text-sm bg-transparent border-b border-border py-1 text-foreground focus:outline-none"
+                             >
+                               {SOCIAL_PLATFORMS.map(p => (
+                                 <option key={p} value={p} className="bg-background text-foreground">{p.charAt(0).toUpperCase() + p.slice(1)}</option>
+                               ))}
+                             </select>
+                             <Input
+                                type="text"
+                                value={social.url}
+                                onChange={(e) => updateSocial(idx, 'url', e.target.value)}
+                                placeholder={t.placeholders.url}
+                                className="h-8 border-none px-0 focus-visible:ring-0 shadow-none"
+                             />
+                          </div>
+                          <Button variant="ghost" size="icon" onClick={() => removeSocial(idx)} className="text-destructive">
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {activeTab === 'design' && (
+                    <div className="space-y-6">
                       <div>
-                        <label className="text-xs font-bold text-gray-600 dark:text-gray-400 uppercase tracking-wider mb-3 block">{t.labels.themeColor}</label>
-                        <div className="flex items-center gap-3">
-                           <div className="relative w-10 h-10 rounded-xl overflow-hidden shadow-inner ring-2 ring-white/50 dark:ring-gray-600/50">
-                             <input 
-                                type="color" 
-                                value={profile.style.themeColor}
-                                onChange={(e) => handleStyleChange('themeColor', e.target.value)}
-                                className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[150%] h-[150%] p-0 border-0 cursor-pointer"
-                              />
-                           </div>
-                           <span className="text-xs font-mono bg-white/50 dark:bg-gray-800/50 px-2 py-1 rounded-md border border-white/20 dark:border-gray-600">{profile.style.themeColor}</span>
+                        <Label className="uppercase text-muted-foreground tracking-wider mb-3 flex items-center gap-2"><Layout className="w-3 h-3" /> {t.labels.layout}</Label>
+                        <div className="grid grid-cols-2 gap-3 mt-3">
+                          {Object.values(TemplateType).map((type) => (
+                            <Button
+                              key={type}
+                              variant={activeTemplate === type ? "default" : "outline"}
+                              onClick={() => setActiveTemplate(type)}
+                              className="w-full justify-start"
+                            >
+                              {type.replace('_', ' ')}
+                            </Button>
+                          ))}
                         </div>
                       </div>
                       
                       <div>
-                        <label className="text-xs font-bold text-gray-600 dark:text-gray-400 uppercase tracking-wider mb-3 block">{t.labels.textColor}</label>
-                        <div className="flex items-center gap-3">
-                           <div className="relative w-10 h-10 rounded-xl overflow-hidden shadow-inner ring-2 ring-white/50 dark:ring-gray-600/50">
-                             <input 
-                                type="color" 
-                                value={profile.style.textColor || '#333333'}
-                                onChange={(e) => handleStyleChange('textColor', e.target.value)}
-                                className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[150%] h-[150%] p-0 border-0 cursor-pointer"
-                              />
-                           </div>
-                           <span className="text-xs font-mono bg-white/50 dark:bg-gray-800/50 px-2 py-1 rounded-md border border-white/20 dark:border-gray-600">{profile.style.textColor || '#333333'}</span>
+                        <Label className="uppercase text-muted-foreground tracking-wider mb-3 flex items-center gap-2"><Wand2 className="w-3 h-3" /> {t.labels.animation}</Label>
+                        <div className="grid grid-cols-2 gap-3 mt-3">
+                          {Object.values(AnimationType).map((anim) => {
+                            const labelMap: Record<AnimationType, string> = {
+                              [AnimationType.NONE]: t.animations.none,
+                              [AnimationType.FADE_IN]: t.animations.fadeIn,
+                              [AnimationType.SLIDE_UP]: t.animations.slideUp,
+                              [AnimationType.PULSE]: t.animations.pulse,
+                              [AnimationType.BOUNCE]: t.animations.bounce,
+                              [AnimationType.FLIP]: t.animations.flip,
+                              [AnimationType.SLICE_IN]: t.animations.sliceIn,
+                              [AnimationType.FOLD_DOWN]: t.animations.foldDown,
+                              [AnimationType.ZOOM_ROTATE]: t.animations.zoomRotate,
+                              [AnimationType.SWING]: t.animations.swing,
+                              [AnimationType.WOBBLE]: t.animations.wobble,
+                              [AnimationType.BLUR_REVEAL]: t.animations.blurReveal,
+                              [AnimationType.GLOW]: t.animations.glow,
+                              [AnimationType.FLOAT]: t.animations.float,
+                              [AnimationType.DIAGONAL_STRIPES]: t.animations.diagonalStripes,
+                              [AnimationType.GLITCH]: t.animations.glitch
+                            };
+                            return (
+                              <Button
+                                key={anim}
+                                variant={profile.style.animation === anim ? "default" : "outline"}
+                                onClick={() => handleStyleChange('animation', anim)}
+                                className="w-full justify-start"
+                              >
+                                {labelMap[anim]}
+                              </Button>
+                            );
+                          })}
                         </div>
                       </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-6">
-                      <div>
-                        <label className="text-xs font-bold text-gray-600 dark:text-gray-400 uppercase tracking-wider mb-3 block">{t.labels.cardBackgroundColor}</label>
-                        <div className="flex items-center gap-3">
-                           <div className="relative w-10 h-10 rounded-xl overflow-hidden shadow-inner ring-2 ring-white/50 dark:ring-gray-600/50">
-                             <input 
-                                type="color" 
-                                value={profile.style.cardBackgroundColor || '#ffffff'}
-                                onChange={(e) => handleStyleChange('cardBackgroundColor', e.target.value)}
-                                className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[150%] h-[150%] p-0 border-0 cursor-pointer"
-                              />
-                           </div>
-                           <span className="text-xs font-mono bg-white/50 dark:bg-gray-800/50 px-2 py-1 rounded-md border border-white/20 dark:border-gray-600">{profile.style.cardBackgroundColor || '#ffffff'}</span>
+                      
+                      <div className="grid grid-cols-2 gap-6">
+                        <div className="space-y-2">
+                          <Label>{t.labels.themeColor}</Label>
+                          <div className="flex items-center gap-3">
+                            <input type="color" value={profile.style.themeColor} onChange={(e) => handleStyleChange('themeColor', e.target.value)} className="w-10 h-10 cursor-pointer rounded border p-1 bg-background" />
+                            <span className="text-xs font-mono">{profile.style.themeColor}</span>
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <Label>{t.labels.textColor}</Label>
+                          <div className="flex items-center gap-3">
+                            <input type="color" value={profile.style.textColor || '#333333'} onChange={(e) => handleStyleChange('textColor', e.target.value)} className="w-10 h-10 cursor-pointer rounded border p-1 bg-background" />
+                            <span className="text-xs font-mono">{profile.style.textColor || '#333333'}</span>
+                          </div>
                         </div>
                       </div>
 
-                      <div>
-                        <label className="text-xs font-bold text-gray-600 dark:text-gray-400 uppercase tracking-wider mb-3 block">{t.labels.cardBorderRadius} ({profile.style.cardBorderRadius}px)</label>
-                        <input 
-                           type="range"
-                           min="0"
-                           max="30"
-                           step="1"
-                           value={profile.style.cardBorderRadius || 0}
-                           onChange={(e) => handleStyleChange('cardBorderRadius', parseInt(e.target.value))}
-                           className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                        />
+                      <div className="grid grid-cols-2 gap-6">
+                         <div className="space-y-2">
+                          <Label>{t.labels.cardBackgroundColor}</Label>
+                          <div className="flex items-center gap-3">
+                            <input type="color" value={profile.style.cardBackgroundColor || '#ffffff'} onChange={(e) => handleStyleChange('cardBackgroundColor', e.target.value)} className="w-10 h-10 cursor-pointer rounded border p-1 bg-background" />
+                            <span className="text-xs font-mono">{profile.style.cardBackgroundColor || '#ffffff'}</span>
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <Label>{t.labels.cardBorderRadius} ({profile.style.cardBorderRadius}px)</Label>
+                          <input type="range" min="0" max="30" value={profile.style.cardBorderRadius || 0} onChange={(e) => handleStyleChange('cardBorderRadius', parseInt(e.target.value))} className="w-full" />
+                        </div>
                       </div>
-                    </div>
-                    
-                    <div className="grid grid-cols-2 gap-6">
-                       <div>
-                        <label className="text-xs font-bold text-gray-600 dark:text-gray-400 uppercase tracking-wider mb-3 block">{t.labels.imageShape}</label>
-                        <select 
-                          value={profile.style.imageShape}
-                          onChange={(e) => handleStyleChange('imageShape', e.target.value)}
-                          className={`w-full ${GLASS_INPUT} px-3 py-2 text-sm appearance-none cursor-pointer`}
-                        >
-                          <option className="dark:bg-gray-800" value="circle">{t.shapes.circle}</option>
-                          <option className="dark:bg-gray-800" value="rounded">{t.shapes.rounded}</option>
-                          <option className="dark:bg-gray-800" value="square">{t.shapes.square}</option>
-                        </select>
+                      
+                      <div className="grid grid-cols-2 gap-6">
+                         <div className="space-y-2">
+                          <Label>{t.labels.imageShape}</Label>
+                          <select value={profile.style.imageShape} onChange={(e) => handleStyleChange('imageShape', e.target.value)} className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background">
+                            <option value="circle">{t.shapes.circle}</option>
+                            <option value="rounded">{t.shapes.rounded}</option>
+                            <option value="square">{t.shapes.square}</option>
+                          </select>
+                        </div>
                       </div>
-                    </div>
 
-                    <div>
-                        <label className="text-xs font-bold text-gray-600 dark:text-gray-400 uppercase tracking-wider mb-3 block flex items-center gap-2">
-                           <TypeIcon className="w-3.5 h-3.5" /> {t.labels.typography}
-                        </label>
-                        <div className="grid grid-cols-2 gap-4">
-                           <select 
-                              value={profile.style.fontFamily}
-                              onChange={(e) => handleStyleChange('fontFamily', e.target.value)}
-                              className={`w-full ${GLASS_INPUT} px-3 py-2 text-sm appearance-none cursor-pointer`}
-                           >
-                              {SUPPORTED_FONTS.map(f => (
-                                <option key={f} value={f} className="dark:bg-gray-800">{f.split(',')[0]}</option>
-                              ))}
+                      <div className="space-y-2">
+                        <Label className="flex items-center gap-2"><TypeIcon className="w-3 h-3" /> {t.labels.typography}</Label>
+                        <div className="grid grid-cols-2 gap-4 mt-2">
+                           <select value={profile.style.fontFamily} onChange={(e) => handleStyleChange('fontFamily', e.target.value)} className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background">
+                              {SUPPORTED_FONTS.map(f => <option key={f} value={f}>{f.split(',')[0]}</option>)}
                            </select>
-                           
-                           <select 
-                              value={profile.style.fontSize}
-                              onChange={(e) => handleStyleChange('fontSize', e.target.value)}
-                              className={`w-full ${GLASS_INPUT} px-3 py-2 text-sm appearance-none cursor-pointer`}
-                           >
-                              <option className="dark:bg-gray-800" value="small">{t.sizes.small}</option>
-                              <option className="dark:bg-gray-800" value="medium">{t.sizes.medium}</option>
-                              <option className="dark:bg-gray-800" value="large">{t.sizes.large}</option>
+                           <select value={profile.style.fontSize} onChange={(e) => handleStyleChange('fontSize', e.target.value)} className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background">
+                              <option value="small">{t.sizes.small}</option>
+                              <option value="medium">{t.sizes.medium}</option>
+                              <option value="large">{t.sizes.large}</option>
                            </select>
-                        </div>
-                    </div>
-                  </div>
-                )}
-
-                {activeTab === 'marketing' && (
-                  <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-4 bg-yellow-50 dark:bg-yellow-900/20 p-3 rounded-xl border border-yellow-200 dark:border-yellow-700/50 leading-relaxed">
-                       {t.labels.marketingDescription}
-                    </p>
-                    <FormInput label={t.labels.utmSource} name="utmSource" value={profile.marketing.utmSource} onChange={(e) => handleMarketingChange('utmSource', e.target.value)} placeholder={t.placeholders.utmSource} />
-                    <FormInput label={t.labels.utmMedium} name="utmMedium" value={profile.marketing.utmMedium} onChange={(e) => handleMarketingChange('utmMedium', e.target.value)} placeholder={t.placeholders.utmMedium} />
-                    <FormInput label={t.labels.utmCampaign} name="utmCampaign" value={profile.marketing.utmCampaign} onChange={(e) => handleMarketingChange('utmCampaign', e.target.value)} placeholder={t.placeholders.utmCampaign} />
-                  </div>
-                )}
-
-                {activeTab === 'addons' && (
-                  <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                    
-                    <div className="bg-blue-50/50 dark:bg-blue-900/10 p-5 rounded-2xl border border-blue-100/50 dark:border-blue-800/30 backdrop-blur-sm">
-                      <h3 className="text-xs font-bold text-blue-800 dark:text-blue-300 mb-4 flex items-center gap-2 uppercase tracking-wide">
-                        <Briefcase className="w-4 h-4" /> {t.labels.ctaButton}
-                      </h3>
-                      <div className="space-y-4">
-                        <div className="grid grid-cols-2 gap-4">
-                           <div>
-                              <label className="text-[10px] text-blue-600 dark:text-blue-400 font-bold uppercase mb-1 block">{t.labels.ctaText}</label>
-                              <input
-                                  type="text"
-                                  value={profile.addons.ctaText}
-                                  onChange={(e) => handleAddonChange('ctaText', e.target.value)}
-                                  className="w-full text-xs bg-white/60 dark:bg-gray-900/60 border border-blue-200 dark:border-blue-800 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-400/50"
-                                  placeholder={t.placeholders.cta}
-                              />
-                           </div>
-                           <div>
-                              <label className="text-[10px] text-blue-600 dark:text-blue-400 font-bold uppercase mb-1 block">{t.labels.ctaColor}</label>
-                              <div className="relative w-full h-[34px] rounded-lg overflow-hidden border border-blue-200 dark:border-blue-800 bg-white/60 dark:bg-gray-900/60">
-                                <input 
-                                    type="color" 
-                                    value={profile.addons.ctaColor}
-                                    onChange={(e) => handleAddonChange('ctaColor', e.target.value)}
-                                    className="absolute -top-1/2 -left-1/2 w-[200%] h-[200%] cursor-pointer"
-                                  />
-                              </div>
-                           </div>
-                        </div>
-                        <div>
-                           <label className="text-[10px] text-blue-600 dark:text-blue-400 font-bold uppercase mb-1 block">{t.labels.ctaUrl}</label>
-                           <input
-                              type="text"
-                              value={profile.addons.ctaUrl}
-                              onChange={(e) => handleAddonChange('ctaUrl', e.target.value)}
-                              className="w-full text-xs bg-white/60 dark:bg-gray-900/60 border border-blue-200 dark:border-blue-800 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-400/50"
-                              placeholder={t.placeholders.url}
-                           />
                         </div>
                       </div>
                     </div>
+                  )}
 
-                    <div className="bg-purple-50/50 dark:bg-purple-900/10 p-5 rounded-2xl border border-purple-100/50 dark:border-purple-800/30 backdrop-blur-sm">
-                       <h3 className="text-xs font-bold text-purple-800 dark:text-purple-300 mb-4 flex items-center gap-2 uppercase tracking-wide">
-                         <ImageIcon className="w-4 h-4" /> {t.labels.bannerUrl}
-                       </h3>
-                       <input
-                          type="text"
-                          value={profile.addons.bannerUrl || ''}
-                          onChange={(e) => handleAddonChange('bannerUrl', e.target.value)}
-                          className="w-full text-xs bg-white/60 dark:bg-gray-900/60 border border-purple-200 dark:border-purple-800 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-purple-400/50"
-                          placeholder={t.placeholders.url}
-                       />
-                    </div>
-
+                  {activeTab === 'marketing' && (
                     <div className="space-y-4">
-                       <div>
-                         <label className="text-xs font-bold text-gray-600 dark:text-gray-400 uppercase tracking-wider mb-2 block">{t.labels.legalDisclaimer}</label>
-                         <textarea
-                            value={profile.addons.disclaimer}
-                            onChange={(e) => handleAddonChange('disclaimer', e.target.value)}
-                            rows={4}
-                            className={`w-full ${GLASS_INPUT} px-3 py-2 text-xs resize-none`}
-                         />
-                       </div>
-
-                       <div className="flex items-center gap-3 p-4 bg-green-50/50 dark:bg-green-900/10 rounded-xl border border-green-100/50 dark:border-green-800/30 backdrop-blur-sm cursor-pointer" onClick={() => handleAddonChange('greenMessage', !profile.addons.greenMessage)}>
-                          <div className={`w-5 h-5 rounded flex items-center justify-center border transition-colors ${profile.addons.greenMessage ? 'bg-green-500 border-green-500' : 'bg-transparent border-green-400'}`}>
-                             {profile.addons.greenMessage && <Check className="w-3.5 h-3.5 text-white" />}
-                          </div>
-                          <span className="text-xs font-bold text-green-800 dark:text-green-300 select-none uppercase tracking-wide">
-                             {t.labels.ecoMessage}
-                          </span>
-                       </div>
-
-                       <div className="flex items-center gap-3 p-4 bg-gray-50/50 dark:bg-gray-800/30 rounded-xl border border-gray-100/50 dark:border-gray-700/30 backdrop-blur-sm cursor-pointer" onClick={() => handleAddonChange('includeQr', !profile.addons.includeQr)}>
-                          <div className={`w-5 h-5 rounded flex items-center justify-center border transition-colors ${profile.addons.includeQr ? 'bg-gray-800 border-gray-800' : 'bg-transparent border-gray-400'}`}>
-                             {profile.addons.includeQr && <Check className="w-3.5 h-3.5 text-white" />}
-                          </div>
-                          <span className="text-xs font-bold text-gray-800 dark:text-gray-300 select-none uppercase tracking-wide flex items-center gap-2">
-                             <QrCode className="w-4 h-4" /> {t.labels.includeQr}
-                          </span>
-                       </div>
+                      <p className="text-sm text-muted-foreground bg-muted p-3 rounded-md border">{t.labels.marketingDescription}</p>
+                      <FormInput label={t.labels.utmSource} name="utmSource" value={profile.marketing.utmSource} onChange={(e) => handleMarketingChange('utmSource', e.target.value)} placeholder={t.placeholders.utmSource} />
+                      <FormInput label={t.labels.utmMedium} name="utmMedium" value={profile.marketing.utmMedium} onChange={(e) => handleMarketingChange('utmMedium', e.target.value)} placeholder={t.placeholders.utmMedium} />
+                      <FormInput label={t.labels.utmCampaign} name="utmCampaign" value={profile.marketing.utmCampaign} onChange={(e) => handleMarketingChange('utmCampaign', e.target.value)} placeholder={t.placeholders.utmCampaign} />
                     </div>
+                  )}
 
-                  </div>
-                )}
-              </div>
-            </div>
+                  {activeTab === 'addons' && (
+                    <div className="space-y-6">
+                      <Card className="shadow-none border-dashed">
+                        <CardHeader className="py-4">
+                          <CardTitle className="text-sm flex items-center gap-2"><Briefcase className="w-4 h-4" /> {t.labels.ctaButton}</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                          <div className="grid grid-cols-2 gap-4">
+                             <div className="space-y-2">
+                                <Label>{t.labels.ctaText}</Label>
+                                <Input value={profile.addons.ctaText} onChange={(e) => handleAddonChange('ctaText', e.target.value)} placeholder={t.placeholders.cta} />
+                             </div>
+                             <div className="space-y-2">
+                                <Label>{t.labels.ctaColor}</Label>
+                                <div className="h-10 rounded-md overflow-hidden border">
+                                  <input type="color" value={profile.addons.ctaColor} onChange={(e) => handleAddonChange('ctaColor', e.target.value)} className="w-[120%] h-[120%] -translate-x-2 -translate-y-2 cursor-pointer" />
+                                </div>
+                             </div>
+                          </div>
+                          <div className="space-y-2">
+                             <Label>{t.labels.ctaUrl}</Label>
+                             <Input value={profile.addons.ctaUrl} onChange={(e) => handleAddonChange('ctaUrl', e.target.value)} placeholder={t.placeholders.url} />
+                          </div>
+                        </CardContent>
+                      </Card>
+
+                      <div className="space-y-2">
+                         <Label className="flex items-center gap-2"><ImageIcon className="w-4 h-4" /> {t.labels.bannerUrl}</Label>
+                         <Input value={profile.addons.bannerUrl || ''} onChange={(e) => handleAddonChange('bannerUrl', e.target.value)} placeholder={t.placeholders.url} />
+                      </div>
+
+                      <div className="space-y-2">
+                         <Label>{t.labels.legalDisclaimer}</Label>
+                         <textarea value={profile.addons.disclaimer} onChange={(e) => handleAddonChange('disclaimer', e.target.value)} rows={4} className="w-full flex rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 resize-none" />
+                      </div>
+
+                      <div className="flex items-center gap-3 p-4 bg-muted/50 rounded-lg border cursor-pointer" onClick={() => handleAddonChange('greenMessage', !profile.addons.greenMessage)}>
+                         <div className={`w-5 h-5 rounded border flex items-center justify-center ${profile.addons.greenMessage ? 'bg-primary border-primary text-primary-foreground' : 'border-input bg-background'}`}>
+                            {profile.addons.greenMessage && <Check className="w-3.5 h-3.5" />}
+                         </div>
+                         <Label className="cursor-pointer">{t.labels.ecoMessage}</Label>
+                      </div>
+
+                      <div className="flex items-center gap-3 p-4 bg-muted/50 rounded-lg border cursor-pointer" onClick={() => handleAddonChange('includeQr', !profile.addons.includeQr)}>
+                         <div className={`w-5 h-5 rounded border flex items-center justify-center ${profile.addons.includeQr ? 'bg-primary border-primary text-primary-foreground' : 'border-input bg-background'}`}>
+                            {profile.addons.includeQr && <Check className="w-3.5 h-3.5" />}
+                         </div>
+                         <Label className="cursor-pointer flex items-center gap-2"><QrCode className="w-4 h-4" /> {t.labels.includeQr}</Label>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </Tabs>
           </div>
 
-          {/* RIGHT COLUMN: Preview & Code */}
-          <div className="lg:col-span-7 flex flex-col gap-4 sm:gap-6 lg:sticky lg:top-28 lg:h-fit">
-            
-            {/* Live Preview Card */}
-            <div className={GLASS_CARD}>
-               <div className="px-3 sm:px-6 py-3 sm:py-4 border-b border-white/20 dark:border-gray-700/50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 sm:gap-0">
+          <div className="lg:col-span-7 flex flex-col gap-6 lg:sticky lg:top-20">
+            <Card>
+               <div className="px-6 py-4 border-b flex justify-between items-center">
                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-red-400/80 shadow-sm"></div>
-                    <div className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-yellow-400/80 shadow-sm"></div>
-                    <div className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-green-400/80 shadow-sm"></div>
+                    <div className="w-3 h-3 rounded-full bg-red-400"></div>
+                    <div className="w-3 h-3 rounded-full bg-yellow-400"></div>
+                    <div className="w-3 h-3 rounded-full bg-green-400"></div>
                  </div>
-                 <div className="flex flex-wrap items-center gap-2 sm:gap-4">
-                    <div className="flex items-center gap-1 sm:gap-2 cursor-pointer" onClick={() => setPreviewDarkMode(!previewDarkMode)}>
-                       <div className={`w-7 h-3.5 sm:w-8 sm:h-4 rounded-full p-0.5 duration-300 ${previewDarkMode ? 'bg-indigo-500' : 'bg-gray-300'}`}>
-                          <div className={`w-2.5 h-2.5 sm:w-3 sm:h-3 bg-white rounded-full shadow-md transform duration-300 ${previewDarkMode ? 'translate-x-3 sm:translate-x-4' : 'translate-x-0'}`}></div>
+                 <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2 cursor-pointer" onClick={() => setPreviewDarkMode(!previewDarkMode)}>
+                       <div className={`w-8 h-4 rounded-full p-0.5 transition-colors ${previewDarkMode ? 'bg-primary' : 'bg-muted-foreground/30'}`}>
+                          <div className={`w-3 h-3 bg-white rounded-full shadow-sm transition-transform ${previewDarkMode ? 'translate-x-4' : 'translate-x-0'}`}></div>
                        </div>
-                       <span className="text-[8px] sm:text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase">{t.labels.previewDarkMode}</span>
+                       <span className="text-xs font-medium text-muted-foreground uppercase">{t.labels.previewDarkMode}</span>
                     </div>
-                    <button onClick={() => setShowInstallModal(true)} className="text-[8px] sm:text-[10px] font-bold text-indigo-500 hover:text-indigo-600 uppercase flex items-center gap-1">
-                       <HelpCircle className="w-3 h-3" /> <span className="hidden xs:inline">{t.labels.installGuide}</span>
-                    </button>
-                    <span className="text-[8px] sm:text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">{t.labels.livePreview}</span>
+                    <Button variant="link" size="sm" onClick={() => setShowInstallModal(true)} className="text-xs uppercase"><HelpCircle className="w-3 h-3 mr-1" /> {t.labels.installGuide}</Button>
+                    <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{t.labels.livePreview}</span>
                  </div>
                </div>
                
-               <div className="p-3 sm:p-8 min-h-[250px] sm:min-h-[300px] flex flex-col justify-center items-center bg-white/30 dark:bg-black/20 backdrop-blur-sm rounded-b-3xl">
-                  {/* Preview Container: bg-white by default, or gray-900 if dark mode toggled */}
-                  <div className={`rounded-xl shadow-2xl p-3 sm:p-8 w-full max-w-2xl mx-auto border border-white/50 animate-in zoom-in-95 duration-500 overflow-x-auto transition-colors ${previewDarkMode ? 'bg-gray-900' : 'bg-white'}`}>
-                     <div 
-                        dangerouslySetInnerHTML={{ __html: sanitizeHtml(generatedHtml) }} 
-                        className="w-full transition-all duration-300" 
-                        style={{
-                           filter: !previewDarkMode ? 'drop-shadow(0 0 15px rgba(0,0,0,0.1))' : 'none'
-                        }}
-                     />
+               <div className="p-8 min-h-[300px] flex items-center justify-center bg-muted/30">
+                  <div className={`rounded-xl shadow-lg border p-8 w-full max-w-2xl overflow-x-auto transition-colors ${previewDarkMode ? 'bg-zinc-950 text-white border-zinc-800' : 'bg-white text-black'}`}>
+                     <div dangerouslySetInnerHTML={{ __html: sanitizeHtml(generatedHtml) }} className="w-full" />
                   </div>
                </div>
-            </div>
+            </Card>
 
-            {/* Source Code Card */}
-            <div className="bg-gray-900/80 dark:bg-black/80 backdrop-blur-xl rounded-2xl sm:rounded-3xl shadow-2xl border border-gray-700/50 overflow-hidden group">
-              <div className="px-3 sm:px-6 py-2 sm:py-3 bg-white/5 border-b border-white/10 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-                <span className="text-[10px] sm:text-xs font-mono text-gray-400">{t.labels.htmlSource}: {t.labels.htmlFileName}</span>
-                <div className="flex gap-1 sm:gap-2 w-full sm:w-auto">
-                   <button 
-                    onClick={handleShare}
-                    className={`flex-1 sm:flex-none flex items-center justify-center gap-1 sm:gap-2 px-2 sm:px-4 py-1.5 rounded-lg text-[8px] sm:text-[10px] font-bold transition-all uppercase tracking-wide bg-white/10 text-gray-300 hover:bg-white/20 border border-white/10`}
-                  >
-                    {isShareCopied ? <Check className="w-3 h-3" /> : <Share className="w-3 h-3" />}
-                    <span className="hidden xs:inline">{isShareCopied ? t.labels.copied : t.labels.shareProfile}</span>
-                  </button>
-                  <button 
-                    onClick={handleCopy}
-                    className={`flex-1 sm:flex-none flex items-center justify-center gap-1 sm:gap-2 px-2 sm:px-4 py-1.5 rounded-lg text-[8px] sm:text-[10px] font-bold transition-all uppercase tracking-wide ${
-                      isCopied 
-                        ? 'bg-green-500/20 text-green-400 border border-green-500/50' 
-                        : 'bg-white/10 text-gray-300 hover:bg-white/20 border border-white/10'
-                    }`}
-                  >
-                    {isCopied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                    <span className="hidden xs:inline">{isCopied ? t.labels.copied : t.labels.copyHtml}</span>
-                  </button>
+            <Card className="overflow-hidden">
+              <div className="px-6 py-3 bg-muted border-b flex justify-between items-center gap-4">
+                <span className="text-xs font-mono text-muted-foreground">{t.labels.htmlSource}: {t.labels.htmlFileName}</span>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={handleShare}>
+                    {isShareCopied ? <Check className="w-3 h-3 mr-1" /> : <Share className="w-3 h-3 mr-1" />}
+                    {isShareCopied ? t.labels.copied : t.labels.shareProfile}
+                  </Button>
+                  <Button size="sm" onClick={handleCopy}>
+                    {isCopied ? <Check className="w-3 h-3 mr-1" /> : <Copy className="w-3 h-3 mr-1" />}
+                    {isCopied ? t.labels.copied : t.labels.copyHtml}
+                  </Button>
                 </div>
               </div>
-              <div className="p-3 sm:p-5 overflow-x-auto relative">
-                <pre className="text-[8px] sm:text-[10px] text-indigo-200/80 font-mono leading-relaxed whitespace-pre-wrap break-all max-h-32 sm:max-h-48 overflow-y-auto custom-scrollbar">
+              <div className="p-4 overflow-x-auto bg-zinc-950">
+                <pre className="text-xs text-zinc-300 font-mono leading-relaxed whitespace-pre-wrap break-all max-h-64 overflow-y-auto">
                   {generatedHtml}
                 </pre>
               </div>
-            </div>
-
+            </Card>
           </div>
         </div>
       </main>
 
-      {/* Installation Guide Modal */}
       {showInstallModal && (
-         <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-2 sm:p-4">
-            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowInstallModal(false)}></div>
-            <div className={`relative w-full max-w-2xl max-h-[90vh] ${GLASS_CARD} p-0 overflow-hidden animate-in zoom-in-95 slide-in-from-bottom-4 sm:slide-in-from-bottom-0 duration-200 rounded-t-3xl sm:rounded-3xl`}>
-               <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-200/20 dark:border-gray-700/50 flex justify-between items-center bg-white/40 dark:bg-black/40">
-                  <h3 className="text-base sm:text-lg font-bold text-gray-800 dark:text-white flex items-center gap-2">
-                     <HelpCircle className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-500" /> {t.labels.installGuide}
-                  </h3>
-                  <button onClick={() => setShowInstallModal(false)} className="text-gray-500 hover:text-red-500 transition-colors p-1">
-                     <X className="w-5 h-5" />
-                  </button>
-               </div>
-               <div className="p-4 sm:p-6 grid gap-4 sm:gap-6 overflow-y-auto max-h-[70vh]">
-                  <div className="bg-white/50 dark:bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-white/20 dark:border-gray-700/50">
-                     <h4 className="font-bold text-red-500 mb-1.5 sm:mb-2 flex items-center gap-2 text-sm sm:text-base">{t.labels.gmail}</h4>
-                     <p className="text-[10px] sm:text-xs text-gray-600 dark:text-gray-300 leading-relaxed">{t.installGuides.gmail}</p>
+         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-background/80 backdrop-blur-sm" onClick={() => setShowInstallModal(false)}></div>
+            <Card className="relative w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl">
+               <CardHeader className="py-4 border-b flex flex-row justify-between items-center bg-muted/30">
+                  <CardTitle className="text-lg flex items-center gap-2">
+                     <HelpCircle className="w-5 h-5" /> {t.labels.installGuide}
+                  </CardTitle>
+                  <Button variant="ghost" size="icon" onClick={() => setShowInstallModal(false)}><X className="w-5 h-5" /></Button>
+               </CardHeader>
+               <CardContent className="p-6 overflow-y-auto space-y-8">
+                  <div>
+                    <h4 className="font-bold flex items-center gap-2 mb-2"><img src="https://upload.wikimedia.org/wikipedia/commons/7/7e/Gmail_icon_%282020%29.svg" className="w-5 h-5" alt="Gmail" /> Gmail</h4>
+                    <ol className="list-decimal pl-5 space-y-2 text-sm text-muted-foreground">
+                      {t.installGuides.gmail.split('\n').map((step, i) => step.trim() && <li key={i}>{step.replace(/^\d+\.\s*/, '')}</li>)}
+                    </ol>
                   </div>
-                  <div className="bg-white/50 dark:bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-white/20 dark:border-gray-700/50">
-                     <h4 className="font-bold text-blue-500 mb-1.5 sm:mb-2 flex items-center gap-2 text-sm sm:text-base">{t.labels.outlook}</h4>
-                     <p className="text-[10px] sm:text-xs text-gray-600 dark:text-gray-300 leading-relaxed">{t.installGuides.outlook}</p>
+                  <div className="border-t pt-6">
+                    <h4 className="font-bold flex items-center gap-2 mb-2"><img src="https://upload.wikimedia.org/wikipedia/commons/d/df/Microsoft_Office_Outlook_%282018%E2%80%93present%29.svg" className="w-5 h-5" alt="Outlook" /> Outlook</h4>
+                    <ol className="list-decimal pl-5 space-y-2 text-sm text-muted-foreground">
+                      {t.installGuides.outlook.split('\n').map((step, i) => step.trim() && <li key={i}>{step.replace(/^\d+\.\s*/, '')}</li>)}
+                    </ol>
                   </div>
-                  <div className="bg-white/50 dark:bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-white/20 dark:border-gray-700/50">
-                     <h4 className="font-bold text-gray-700 dark:text-gray-300 mb-1.5 sm:mb-2 flex items-center gap-2 text-sm sm:text-base">{t.labels.appleMail}</h4>
-                     <p className="text-[10px] sm:text-xs text-gray-600 dark:text-gray-300 leading-relaxed">{t.installGuides.apple}</p>
+                  <div className="border-t pt-6">
+                    <h4 className="font-bold flex items-center gap-2 mb-2"><img src="https://upload.wikimedia.org/wikipedia/commons/3/3b/Apple_Mail_Icon.png" className="w-5 h-5" alt="Apple Mail" /> Apple Mail</h4>
+                    <ol className="list-decimal pl-5 space-y-2 text-sm text-muted-foreground">
+                      {t.installGuides.apple.split('\n').map((step, i) => step.trim() && <li key={i}>{step.replace(/^\d+\.\s*/, '')}</li>)}
+                    </ol>
                   </div>
-               </div>
-            </div>
+               </CardContent>
+            </Card>
          </div>
       )}
 
       {/* Privacy & Footer */}
-      <div className="mt-auto pt-8 sm:pt-12 text-center relative z-10 px-3 sm:px-4">
-        <div className="inline-block max-w-2xl mx-auto mb-4 sm:mb-6 p-3 sm:p-4 rounded-xl sm:rounded-2xl bg-indigo-50/50 dark:bg-indigo-900/10 border border-indigo-100/50 dark:border-indigo-800/30 backdrop-blur-sm">
-           <p className="text-[10px] sm:text-xs text-indigo-800 dark:text-indigo-300 flex items-center justify-center gap-2 leading-relaxed">
-             <Shield className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
+      <div className="mt-auto py-8 text-center px-4">
+        <div className="inline-block max-w-2xl mx-auto mb-6 p-4 rounded-2xl bg-muted/50 border">
+           <p className="text-xs text-muted-foreground flex items-center justify-center gap-2 leading-relaxed">
+             <Shield className="w-4 h-4 flex-shrink-0" />
              {t.privacyNotice}
            </p>
         </div>
 
-        <footer className="text-[10px] sm:text-xs text-gray-500 dark:text-gray-400 pb-4">
+        <footer className="text-xs text-muted-foreground pb-4">
           <p className="mb-1 flex items-center justify-center gap-2">
             <span>{t.footer.madeBy}</span>
-            <a href="https://koreagency.it" target="_blank" rel="noopener noreferrer" className="inline-flex items-center hover:opacity-90">
-              <img src={footerLogoLight} alt={t.labels.agencyLogoAlt} className="h-7 w-auto dark:hidden" />
-              <img src={footerLogoDark} alt={t.labels.agencyLogoAlt} className="h-7 w-auto hidden dark:inline" />
-            </a>
           </p>
           <p className="opacity-70 text-[10px]">
             &copy; {new Date().getFullYear()} {t.labels.agencyName}. {t.footer.copyright}

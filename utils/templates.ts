@@ -1,4 +1,4 @@
-import { SignatureProfile, TemplateType, Translation } from "../types";
+import { SignatureProfile, TemplateType, Translation, AnimationType } from "../types";
 
 // HTML entity encoding to prevent XSS
 const escapeHtml = (str: string): string => {
@@ -248,10 +248,88 @@ export const generateHtml = (profile: SignatureProfile, type: TemplateType, t: T
   `;
 
   // --- GLOBAL CARD WRAPPER ---
+  let animationCss = '';
+  let animationStyle = '';
+
+  if (style.animation && style.animation !== AnimationType.NONE) {
+    if (style.animation === AnimationType.FADE_IN) {
+      animationCss = `@keyframes sigFadeIn { from { opacity: 0; } to { opacity: 1; } }`;
+      animationStyle = 'animation: sigFadeIn 0.8s ease-in-out forwards; opacity: 0;';
+    } else if (style.animation === AnimationType.SLIDE_UP) {
+      animationCss = `@keyframes sigSlideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }`;
+      animationStyle = 'animation: sigSlideUp 0.8s ease-out forwards; opacity: 0;';
+    } else if (style.animation === AnimationType.PULSE) {
+      animationCss = `@keyframes sigPulse { 0% { transform: scale(0.98); } 50% { transform: scale(1.02); } 100% { transform: scale(0.98); } }`;
+      animationStyle = 'animation: sigPulse 2s infinite ease-in-out;';
+    } else if (style.animation === AnimationType.BOUNCE) {
+      animationCss = `@keyframes sigBounce { 0%, 20%, 50%, 80%, 100% { transform: translateY(0); } 40% { transform: translateY(-10px); } 60% { transform: translateY(-5px); } }`;
+      animationStyle = 'animation: sigBounce 2s infinite;';
+    } else if (style.animation === AnimationType.FLIP) {
+      animationCss = `@keyframes sigFlip { from { transform: perspective(400px) rotateY(90deg); opacity: 0; } to { transform: perspective(400px) rotateY(0deg); opacity: 1; } }`;
+      animationStyle = 'animation: sigFlip 1s ease-out forwards; opacity: 0;';
+    } else if (style.animation === AnimationType.SLICE_IN) {
+      animationCss = `@keyframes sigSlice { from { clip-path: polygon(0 0, 0 0, 0 100%, 0% 100%); opacity: 0; transform: translateX(-20px); } to { clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); opacity: 1; transform: translateX(0); } }`;
+      animationStyle = 'animation: sigSlice 1s cubic-bezier(0.16, 1, 0.3, 1) forwards; opacity: 0;';
+    } else if (style.animation === AnimationType.FOLD_DOWN) {
+      animationCss = `@keyframes sigFold { from { transform: perspective(1000px) rotateX(-90deg); transform-origin: top; opacity: 0; } to { transform: perspective(1000px) rotateX(0deg); transform-origin: top; opacity: 1; } }`;
+      animationStyle = 'animation: sigFold 0.8s ease-out forwards; opacity: 0;';
+    } else if (style.animation === AnimationType.ZOOM_ROTATE) {
+      animationCss = `@keyframes sigZoomRotate { from { transform: scale(0.8) rotate(-5deg); opacity: 0; } to { transform: scale(1) rotate(0); opacity: 1; } }`;
+      animationStyle = 'animation: sigZoomRotate 0.6s ease-out forwards; opacity: 0;';
+    } else if (style.animation === AnimationType.SWING) {
+      animationCss = `@keyframes sigSwing { 20% { transform: rotate(15deg); } 40% { transform: rotate(-10deg); } 60% { transform: rotate(5deg); } 80% { transform: rotate(-5deg); } to { transform: rotate(0deg); } }`;
+      animationStyle = 'animation: sigSwing 1.5s ease-out; transform-origin: top center;';
+    } else if (style.animation === AnimationType.WOBBLE) {
+      animationCss = `@keyframes sigWobble { 0%, 100% { transform: translateX(0%); } 15% { transform: translateX(-5%) rotate(-5deg); } 30% { transform: translateX(4%) rotate(3deg); } 45% { transform: translateX(-3%) rotate(-3deg); } 60% { transform: translateX(2%) rotate(2deg); } 75% { transform: translateX(-1%) rotate(-1deg); } }`;
+      animationStyle = 'animation: sigWobble 1s ease-in-out;';
+    } else if (style.animation === AnimationType.BLUR_REVEAL) {
+      animationCss = `@keyframes sigBlurReveal { from { filter: blur(12px); opacity: 0; transform: scale(1.03); } to { filter: blur(0); opacity: 1; transform: scale(1); } }`;
+      animationStyle = 'animation: sigBlurReveal 1.2s cubic-bezier(0.19, 1, 0.22, 1) forwards; opacity: 0;';
+    } else if (style.animation === AnimationType.GLOW) {
+      animationCss = `@keyframes sigGlow { 0%, 100% { box-shadow: 0 0 5px ${color}40, 0 0 10px ${color}20; border: 1px solid transparent; } 50% { box-shadow: 0 0 15px ${color}80, 0 0 30px ${color}60; border: 1px solid ${color}80; } }`;
+      animationStyle = `animation: sigGlow 3s infinite ease-in-out; border: 1px solid transparent;`;
+    } else if (style.animation === AnimationType.FLOAT) {
+      animationCss = `@keyframes sigFloat { 0%, 100% { transform: translateY(0); box-shadow: 0 5px 15px rgba(0,0,0,0.05); } 50% { transform: translateY(-8px); box-shadow: 0 15px 25px rgba(0,0,0,0.1); } }`;
+      animationStyle = 'animation: sigFloat 4s infinite ease-in-out;';
+    } else if (style.animation === AnimationType.DIAGONAL_STRIPES) {
+      animationCss = `@keyframes sigDiagStripes {
+        0% { 
+          opacity: 0; 
+          transform: translateX(30px);
+          -webkit-mask-image: linear-gradient(-45deg, black 0%, black 30%, transparent 32%, black 36%, transparent 38%, black 42%, transparent 44%, black 50%, transparent 55%, black 65%, transparent 75%, black 85%, transparent 100%);
+          -webkit-mask-size: 400% 400%;
+          -webkit-mask-position: 100% 100%;
+        }
+        15% { opacity: 1; }
+        100% { 
+          opacity: 1; 
+          transform: translateX(0);
+          -webkit-mask-image: linear-gradient(-45deg, black 0%, black 30%, transparent 32%, black 36%, transparent 38%, black 42%, transparent 44%, black 50%, transparent 55%, black 65%, transparent 75%, black 85%, transparent 100%);
+          -webkit-mask-size: 400% 400%;
+          -webkit-mask-position: 0% 0%;
+        }
+      }`;
+      animationStyle = 'animation: sigDiagStripes 3s cubic-bezier(0.19, 1, 0.22, 1) forwards; opacity: 0;';
+    } else if (style.animation === AnimationType.GLITCH) {
+      animationCss = `@keyframes sigGlitch {
+        0% { clip-path: inset(0 0 0 0); transform: translate(0); opacity: 0; }
+        20% { clip-path: inset(10% 0 80% 0); transform: translate(-5px, 0); opacity: 1; }
+        40% { clip-path: inset(80% 0 5% 0); transform: translate(5px, 0); }
+        60% { clip-path: inset(30% 0 50% 0); transform: translate(-5px, 0); }
+        80% { clip-path: inset(0 0 0 0); transform: translate(2px, 0); }
+        100% { clip-path: inset(0 0 0 0); transform: translate(0); opacity: 1; }
+      }`;
+      animationStyle = 'animation: sigGlitch 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards; opacity: 0;';
+    }
+  }
+
+  const styleTag = animationCss ? `<style>${animationCss}</style>` : '';
+
   // Using a single cell table with background color and radius ensures compatibility across most clients (including dark mode fix)
   const wrapperStart = `
+    ${styleTag}
     <div style="font-family: ${font}; color: ${textColor};">
-    <table cellpadding="0" cellspacing="0" border="0" style="background-color: ${cardBg}; border-radius: ${cardRadius}px; overflow: hidden; max-width: 600px;">
+    <table cellpadding="0" cellspacing="0" border="0" style="background-color: ${cardBg}; border-radius: ${cardRadius}px; overflow: hidden; max-width: 600px; ${animationStyle}">
       <tr>
         <td style="padding: 20px;">
   `;

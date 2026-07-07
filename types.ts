@@ -13,6 +13,7 @@ export interface StyleConfig {
   iconStyle: 'original' | 'colored' | 'black' | 'white';
   cardBackgroundColor: string;
   cardBorderRadius: number;
+  animation: AnimationType;
 }
 
 export interface SignatureAddons {
@@ -65,6 +66,25 @@ export enum TemplateType {
   CORPORATE = 'CORPORATE', 
   ELEGANT = 'ELEGANT',     
   CREATIVE = 'CREATIVE'    
+}
+
+export enum AnimationType {
+  NONE = 'NONE',
+  FADE_IN = 'FADE_IN',
+  SLIDE_UP = 'SLIDE_UP',
+  PULSE = 'PULSE',
+  BOUNCE = 'BOUNCE',
+  FLIP = 'FLIP',
+  SLICE_IN = 'SLICE_IN',
+  FOLD_DOWN = 'FOLD_DOWN',
+  ZOOM_ROTATE = 'ZOOM_ROTATE',
+  SWING = 'SWING',
+  WOBBLE = 'WOBBLE',
+  BLUR_REVEAL = 'BLUR_REVEAL',
+  GLOW = 'GLOW',
+  FLOAT = 'FLOAT',
+  DIAGONAL_STRIPES = 'DIAGONAL_STRIPES',
+  GLITCH = 'GLITCH'
 }
 
 export const SUPPORTED_FONTS = [
@@ -125,6 +145,7 @@ export interface Translation {
     cardBackgroundColor: string;
     cardBorderRadius: string;
     imageShape: string;
+    animation: string;
     typography: string;
     layout: string;
     ctaButton: string;
@@ -193,5 +214,23 @@ export interface Translation {
     gmail: string;
     outlook: string;
     apple: string;
-  }
+  };
+  animations: {
+    none: string;
+    fadeIn: string;
+    slideUp: string;
+    pulse: string;
+    bounce: string;
+    flip: string;
+    sliceIn: string;
+    foldDown: string;
+    zoomRotate: string;
+    swing: string;
+    wobble: string;
+    blurReveal: string;
+    glow: string;
+    float: string;
+    diagonalStripes: string;
+    glitch: string;
+  };
 }
