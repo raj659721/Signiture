@@ -583,6 +583,74 @@ export const generateHtml = (profile: SignatureProfile, type: TemplateType, t: T
        </table>
     `;
   }
+  else if (type === TemplateType.COMPACT) {
+    templateContent = `
+      <table cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-left: 4px solid ${color}; padding-left: 10px;">
+        <tr>
+          <td style="vertical-align: middle;">
+             <span style="font-size: ${nameSize}; font-weight: bold; color: ${textColor};">${fullName}</span>
+             <span style="color: ${color}; margin: 0 5px;">|</span>
+             <span style="font-size: ${bodySize}; color: ${textColor}; font-weight: 500;">${jobTitle}</span>
+             <span style="color: #ccc; margin: 0 5px;">-</span>
+             <span style="font-size: ${smallSize}; color: ${textColor}; opacity: 0.9;">${company}</span>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding-top: 4px; font-size: ${smallSize}; color: ${textColor}; opacity: 0.8; line-height: 1.4;">
+             ${email ? `<a href="mailto:${email}" style="color: ${textColor}; text-decoration: none; margin-right: 10px;">${abbr.e}: ${email}</a>` : ''}
+             ${phone ? `<span style="margin-right: 10px;">${abbr.p}: ${phone}</span>` : ''}
+             ${mobile ? `<span style="margin-right: 10px;">${abbr.m}: ${mobile}</span>` : ''}
+             ${website ? `<a href="${utmWebsite}" style="color: ${color}; text-decoration: none;">${abbr.w}: ${website.replace(/^https?:\/\//, '')}</a>` : ''}
+          </td>
+        </tr>
+      </table>
+    `;
+  }
+  else if (type === TemplateType.TWO_COLUMN) {
+    templateContent = `
+      <table cellpadding="0" cellspacing="0" border="0" style="width: 100%;">
+        <tr>
+          <td width="48%" style="vertical-align: top; padding-right: 15px; border-right: 2px solid ${color};">
+             ${avatarUrl ? `<img src="${avatarUrl}" width="60" style="border-radius: ${imgRadius}; display: block; margin-bottom: 10px;" />` : ''}
+             <div style="font-size: ${nameSize}; font-weight: bold; color: ${textColor};">${fullName}</div>
+             <div style="font-size: ${bodySize}; color: ${textColor}; opacity: 0.9; margin-bottom: 2px;">${jobTitle}</div>
+             <div style="font-size: ${smallSize}; color: ${color}; font-weight: bold;">${company}</div>
+             ${renderCompanyLogo('10px', '0px')}
+          </td>
+          <td width="4%" style="font-size: 0; line-height: 0;">&nbsp;</td>
+          <td width="48%" style="vertical-align: top; padding-left: 5px;">
+             ${contactRows}
+             ${renderSocials(true)}
+             ${renderCTA()}
+          </td>
+        </tr>
+      </table>
+    `;
+  }
+  else if (type === TemplateType.SOCIAL_FOCUS) {
+    templateContent = `
+      <table cellpadding="0" cellspacing="0" border="0" style="width: 100%; text-align: center;">
+        <tr>
+          <td align="center">
+             ${avatarUrl ? `<img src="${avatarUrl}" width="80" height="80" style="border-radius: ${imgRadius}; display: block; border: 3px solid ${color};" />` : ''}
+             <div style="font-size: ${nameSize}; font-weight: bold; color: ${textColor}; margin-top: 10px;">${fullName}</div>
+             <div style="font-size: ${bodySize}; color: ${textColor}; opacity: 0.9;">${jobTitle} @ ${company}</div>
+          </td>
+        </tr>
+        <tr>
+          <td align="center" style="padding-top: 10px; padding-bottom: 10px;">
+             ${renderSocials(false, 'center')}
+          </td>
+        </tr>
+        <tr>
+          <td align="center" style="font-size: ${smallSize}; color: ${textColor}; opacity: 0.8; border-top: 1px dashed #ccc; padding-top: 10px;">
+             ${email ? `<a href="mailto:${email}" style="color: ${color}; text-decoration: none; margin: 0 5px;">${email}</a>` : ''}
+             ${website ? `<a href="${utmWebsite}" style="color: ${color}; text-decoration: none; margin: 0 5px;">${website.replace(/^https?:\/\//, '')}</a>` : ''}
+          </td>
+        </tr>
+      </table>
+    `;
+  }
   else {
     // Fallback (Horizontal)
     const hasLogo = !!logoUrl;

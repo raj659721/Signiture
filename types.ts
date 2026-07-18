@@ -65,7 +65,10 @@ export enum TemplateType {
   HORIZONTAL = 'HORIZONTAL',
   CORPORATE = 'CORPORATE', 
   ELEGANT = 'ELEGANT',     
-  CREATIVE = 'CREATIVE'    
+  CREATIVE = 'CREATIVE',
+  COMPACT = 'COMPACT',
+  TWO_COLUMN = 'TWO_COLUMN',
+  SOCIAL_FOCUS = 'SOCIAL_FOCUS'
 }
 
 export enum AnimationType {
@@ -134,6 +137,13 @@ export interface Translation {
     company: string;
     logoUrl: string; 
     logoLink: string; 
+    classic: string;
+    corporate: string;
+    elegant: string;
+    creative: string;
+    compact: string;
+    twoColumn: string;
+    socialFocus: string;
     email: string;
     phone: string;
     mobile: string;
